@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 
-# Helper to extract header value, determine pass/fail, and output JSON fragment
+# Checks a single security header and outputs a JSON fragment (without trailing comma)
 check_header_audit() {
   local header_name="$1"
   local expected_val="${2:-}"
-  local is_last="${3:-false}"
-  local tmp_headers="$4"
+  local tmp_headers="$3"
 
   local val
   val=$(get_http_header "$header_name" "$tmp_headers")
@@ -36,11 +35,7 @@ check_header_audit() {
   local safe_val="${val//\\/\\\\}"
   safe_val="${safe_val//\"/\\\"}"
 
-  if [[ "$is_last" == "true" ]]; then
-    echo -n "\"$header_name\":{\"present\":$present,\"value\":\"$safe_val\",\"status\":\"$status\"}"
-  else
-    echo -n "\"$header_name\":{\"present\":$present,\"value\":\"$safe_val\",\"status\":\"$status\"},"
-  fi
+  echo -n "\"$header_name\":{\"present\":$present,\"value\":\"$safe_val\",\"status\":\"$status\"}"
 }
 
 run_security_headers_audit() {
@@ -51,15 +46,16 @@ run_security_headers_audit() {
 
   echo "  -> Running Security Headers audit..."
 
-  # Build the JSON object
-  {
-    echo -n "{"
-    check_header_audit "Strict-Transport-Security" "" "false" "$tmp_headers"
-    check_header_audit "Content-Security-Policy" "" "false" "$tmp_headers"
-    check_header_audit "X-Frame-Options" "" "false" "$tmp_headers"
-    check_header_audit "X-Content-Type-Options" "nosniff" "false" "$tmp_headers"
-    check_header_audit "Referrer-Policy" "" "false" "$tmp_headers"
-    check_header_audit "Permissions-Policy" "" "true" "$tmp_headers"
-    echo "}"
-  } >"$sec_outfile"
+  # Collect individual header check results, then join with commas
+  local fragments=()
+  fragments+=("$(check_header_audit "Strict-Transport-Security" "" "$tmp_headers")")
+  fragments+=("$(check_header_audit "Content-Security-Policy" "" "$tmp_headers")")
+  fragments+=("$(check_header_audit "X-Frame-Options" "" "$tmp_headers")")
+  fragments+=("$(check_header_audit "X-Content-Type-Options" "nosniff" "$tmp_headers")")
+  fragments+=("$(check_header_audit "Referrer-Policy" "" "$tmp_headers")")
+  fragments+=("$(check_header_audit "Permissions-Policy" "" "$tmp_headers")")
+
+  # Join fragments with commas using IFS
+  local IFS=","
+  echo "{${fragments[*]}}" >"$sec_outfile"
 }

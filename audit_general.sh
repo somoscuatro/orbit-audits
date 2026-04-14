@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Use the Google PageSpeed Insights API categories
-readonly LH_CATEGORIES=("ACCESSIBILITY" "BEST_PRACTICES" "PERFORMANCE" "SEO")
+# Google PageSpeed Insights API categories
+readonly -a LH_CATEGORIES=("ACCESSIBILITY" "BEST_PRACTICES" "PERFORMANCE" "SEO") 2>/dev/null || true
 
 run_general_audit() {
   local url="$1"
