@@ -114,6 +114,31 @@ process_url() {
   echo "  -> Saved all results for $url in $domain_dir"
 }
 
+# Verify that required external commands are available
+check_dependencies() {
+  local missing=()
+
+  # curl is always needed
+  command -v curl >/dev/null 2>&1 || missing+=("curl")
+
+  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
+    command -v jq >/dev/null 2>&1 || missing+=("jq")
+  fi
+
+  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "accessibility" ]]; then
+    command -v pa11y >/dev/null 2>&1 || missing+=("pa11y")
+  fi
+
+  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "csp" ]]; then
+    command -v csp >/dev/null 2>&1 || missing+=("csp")
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "Error: Missing required dependencies: ${missing[*]}" >&2
+    exit 1
+  fi
+}
+
 # --- Main Execution ---
 
 main() {
@@ -126,6 +151,8 @@ main() {
     echo "Error: Invalid audit type '$AUDIT_TYPE'. Allowed values: all, general, accessibility, csp, security." >&2
     exit 1
   fi
+
+  check_dependencies
 
   while IFS= read -r url; do
     # Ignore empty lines or lines starting with '#'
