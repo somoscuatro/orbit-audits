@@ -57,6 +57,17 @@ source "$(dirname "$0")/audit_accessibility.sh"
 source "$(dirname "$0")/audit_csp.sh"
 source "$(dirname "$0")/audit_security_headers.sh"
 
+# Temporary files registry for cleanup on exit/interrupt
+TMP_FILES=()
+
+cleanup() {
+  for f in "${TMP_FILES[@]+"${TMP_FILES[@]}"}"; do
+    rm -f "$f"
+  done
+}
+
+trap cleanup EXIT INT TERM
+
 process_url() {
   local url="$1"
   local domain_safe
@@ -73,6 +84,7 @@ process_url() {
   local tmp_body
   tmp_headers=$(mktemp)
   tmp_body=$(mktemp)
+  TMP_FILES+=("$tmp_headers" "$tmp_body")
   curl -sL --max-time 30 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" -D "$tmp_headers" "$url" >"$tmp_body" || true
 
   # Run selected audits based on AUDIT_TYPE parameter
@@ -92,8 +104,9 @@ process_url() {
     run_security_headers_audit "$url" "$domain_dir" "$tmp_headers"
   fi
 
-  # Clean up temporary files
+  # Clean up temporary files for this URL
   rm -f "$tmp_headers" "$tmp_body"
+  TMP_FILES=()
 
   echo "  -> Saved all results for $url in $domain_dir"
 }
