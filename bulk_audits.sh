@@ -2,11 +2,6 @@
 
 set -euo pipefail
 
-# Configuration
-readonly URLS_FILE="$1"
-readonly AUDIT_TYPE="${2:-all}"
-readonly OUT_DIR="./audits_results"
-
 # --- Helper Functions ---
 
 print_help() {
@@ -25,6 +20,11 @@ if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   print_help
   exit 0
 fi
+
+# Configuration
+readonly URLS_FILE="$1"
+readonly AUDIT_TYPE="${2:-all}"
+readonly OUT_DIR="./audits_results"
 
 # Function to 'slugify' a URL's domain using pure bash
 domain_to_filename() {
