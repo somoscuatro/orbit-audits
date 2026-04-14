@@ -50,12 +50,14 @@ get_http_header() {
   grep -i "^${header_name}:" "$headers_file" | head -n 1 | sed -e 's/^[^:]*: *//' | tr -d '\r' || true
 }
 
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # --- Audit Functions ---
 
-source "$(dirname "$0")/audit_general.sh"
-source "$(dirname "$0")/audit_accessibility.sh"
-source "$(dirname "$0")/audit_csp.sh"
-source "$(dirname "$0")/audit_security_headers.sh"
+source "${SCRIPT_DIR}/audit_general.sh"
+source "${SCRIPT_DIR}/audit_accessibility.sh"
+source "${SCRIPT_DIR}/audit_csp.sh"
+source "${SCRIPT_DIR}/audit_security_headers.sh"
 
 # Temporary files registry for cleanup on exit/interrupt
 TMP_FILES=()
