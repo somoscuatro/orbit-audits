@@ -1,25 +1,46 @@
 #!/usr/bin/env bash
 
-readonly LH_CATEGORIES=("accessibility" "best-practices" "performance" "seo")
+# Use the Google PageSpeed Insights API categories
+readonly LH_CATEGORIES=("ACCESSIBILITY" "BEST_PRACTICES" "PERFORMANCE" "SEO")
 
 run_general_audit() {
   local url="$1"
   local domain_dir="$2"
-  local devices=("mobile" "desktop")
+  local devices=("MOBILE" "DESKTOP")
+
+  # Ensure the URL has a scheme, PageSpeed Insights requires it
+  if [[ "$url" != *://* ]]; then
+    url="https://${url}"
+  fi
+
+  if [[ -z "${GOOGLE_PAGESPEED_API_KEY:-}" ]]; then
+    echo "  -> Error: GOOGLE_PAGESPEED_API_KEY environment variable is not set. Skipping general audit." >&2
+    return 1
+  fi
 
   for device in "${devices[@]}"; do
+    local device_lower
+    device_lower=$(echo "$device" | tr '[:upper:]' '[:lower:]')
+    
+    local general_outfile="${domain_dir}/audit_general_${device_lower}.json"
+    echo "  -> Running Google PageSpeed Insights (all categories) for $device..."
+
+    # Build the curl arguments array to pass all categories
+    local curl_args=(
+      --silent
+      --show-error
+      --location
+      --get
+      --data-urlencode "url=${url}"
+      --data-urlencode "key=${GOOGLE_PAGESPEED_API_KEY}"
+      --data-urlencode "strategy=${device}"
+    )
+
     for cat in "${LH_CATEGORIES[@]}"; do
-      local lh_outfile="${domain_dir}/lh_${device}_${cat}.json"
-      echo "  -> Running Lighthouse ($cat) for $device..."
-
-      local preset_flag=""
-      if [[ "$device" == "desktop" ]]; then
-        preset_flag="--preset=desktop"
-      fi
-
-      # Use npx lighthouse to ensure it runs if installed locally, or just lighthouse if global.
-      # For now relying on `lighthouse` being in PATH as requested.
-      lighthouse "$url" --output-path="$lh_outfile" --only-categories "$cat" --output json $preset_flag --disable-full-page-screenshot || true
+      curl_args+=(--data-urlencode "category=${cat}")
     done
+
+    # Make the API call, pipe through jq -c to minify JSON for token savings
+    curl "${curl_args[@]}" "https://www.googleapis.com/pagespeedonline/v5/runPagespeed" | jq -c . > "$general_outfile" || true
   done
 }

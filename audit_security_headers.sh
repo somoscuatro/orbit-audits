@@ -36,14 +36,10 @@ check_header_audit() {
   local safe_val="${val//\\/\\\\}"
   safe_val="${safe_val//\"/\\\"}"
 
-  echo "  \"$header_name\": {"
-  echo "    \"present\": $present,"
-  echo "    \"value\": \"$safe_val\","
-  echo "    \"status\": \"$status\""
   if [[ "$is_last" == "true" ]]; then
-    echo "  }"
+    echo -n "\"$header_name\":{\"present\":$present,\"value\":\"$safe_val\",\"status\":\"$status\"}"
   else
-    echo "  },"
+    echo -n "\"$header_name\":{\"present\":$present,\"value\":\"$safe_val\",\"status\":\"$status\"},"
   fi
 }
 
@@ -57,7 +53,7 @@ run_security_headers_audit() {
 
   # Build the JSON object
   {
-    echo "{"
+    echo -n "{"
     check_header_audit "Strict-Transport-Security" "" "false" "$tmp_headers"
     check_header_audit "Content-Security-Policy" "" "false" "$tmp_headers"
     check_header_audit "X-Frame-Options" "" "false" "$tmp_headers"
