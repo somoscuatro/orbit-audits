@@ -79,13 +79,16 @@ process_url() {
   # Create the output directory for this domain
   mkdir -p "$domain_dir"
 
-  # Fetch headers and body ONCE to share across multiple audits
-  local tmp_headers
-  local tmp_body
-  tmp_headers=$(mktemp)
-  tmp_body=$(mktemp)
-  TMP_FILES+=("$tmp_headers" "$tmp_body")
-  curl -sL --max-time 30 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" -D "$tmp_headers" "$url" >"$tmp_body" || true
+  # Fetch headers and body ONCE to share across audits that need them (csp, security)
+  local tmp_headers=""
+  local tmp_body=""
+
+  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "csp" || "$AUDIT_TYPE" == "security" ]]; then
+    tmp_headers=$(mktemp)
+    tmp_body=$(mktemp)
+    TMP_FILES+=("$tmp_headers" "$tmp_body")
+    curl -sL --max-time 30 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" -D "$tmp_headers" "$url" >"$tmp_body" || true
+  fi
 
   # Run selected audits based on AUDIT_TYPE parameter
   if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
