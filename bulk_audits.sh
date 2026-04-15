@@ -149,10 +149,34 @@ process_url() {
     # Strategy Pattern: Dynamically source the chosen implementation
     if [[ "$fallback_to_lighthouse" == true ]]; then
       source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+      run_general_audit "$url" "$domain_dir"
     else
       source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
+      run_general_audit "$url" "$domain_dir"
+
+      # Since PageSpeed runs on Google Datacenter IPs, it often gets blocked (e.g. 503) 
+      # by sites even if your local laptop's `curl` passed perfectly fine.
+      # So we MUST verify the actual JSON output from PageSpeed API.
+      local ps_failed=false
+      for device in mobile desktop; do
+        local f="${domain_dir}/audit_general_${device}.json"
+        # If the file is missing/empty, or jq parses out an `.error` object
+        if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
+          ps_failed=true
+          break
+        fi
+      done
+
+      if [[ "$ps_failed" == true ]]; then
+        if command -v lighthouse >/dev/null 2>&1; then
+          echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
+          source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+          run_general_audit "$url" "$domain_dir"
+        else
+          echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
+        fi
+      fi
     fi
-    run_general_audit "$url" "$domain_dir"
   fi
 
   if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
