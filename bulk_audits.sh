@@ -5,7 +5,7 @@ set -euo pipefail
 # --- Helper Functions ---
 
 print_help() {
-  echo "Usage: $(basename "$0") <urls_file> [audit_type]"
+  echo "Usage: $(basename "$0") [options] <urls_file> [audit_type]"
   echo ""
   echo "Arguments:"
   echo "  <urls_file>  Path to a text file containing a list of URLs to audit (one per line)."
@@ -13,13 +13,29 @@ print_help() {
   echo "               Allowed values: all, general, accessibility, csp, security"
   echo ""
   echo "Options:"
-  echo "  -h, --help   Show this help message and exit."
+  echo "  -h, --help       Show this help message and exit."
+  echo "  --lighthouse     Use Lighthouse CLI instead of Google PageSpeed API for the general audit."
 }
 
 if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   print_help
   exit 0
 fi
+
+# Parse options
+USE_LIGHTHOUSE=false
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+  --lighthouse)
+    USE_LIGHTHOUSE=true
+    shift
+    ;;
+  *)
+    echo "Error: Unknown option '$1'" >&2
+    exit 1
+    ;;
+  esac
+done
 
 # Configuration
 readonly URLS_FILE="$1"
@@ -54,7 +70,6 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Audit Functions ---
 
-source "${SCRIPT_DIR}/audit_general.sh"
 source "${SCRIPT_DIR}/audit_accessibility.sh"
 source "${SCRIPT_DIR}/audit_csp.sh"
 source "${SCRIPT_DIR}/audit_security_headers.sh"
@@ -94,6 +109,25 @@ process_url() {
 
   # Run selected audits based on AUDIT_TYPE parameter
   if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
+    local fallback_to_lighthouse="$USE_LIGHTHOUSE"
+
+    if [[ "$fallback_to_lighthouse" != true ]]; then
+      local curl_out status_code content_type
+      curl_out=$(curl -sL -o /dev/null -w "%{http_code}\n%{content_type}" --max-time 10 "$url" || echo "000")
+      status_code=$(echo "$curl_out" | head -n 1)
+      content_type=$(echo "$curl_out" | tail -n 1)
+
+      if [[ "$status_code" != "200" || "$content_type" != *"text/html"* ]]; then
+        echo "  -> Notice: URL appears to block basic requests (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Falling back to Lighthouse CLI."
+        fallback_to_lighthouse=true
+      fi
+    fi
+
+    if [[ "$fallback_to_lighthouse" == true ]]; then
+      source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+    else
+      source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
+    fi
     run_general_audit "$url" "$domain_dir"
   fi
 
@@ -125,6 +159,9 @@ check_dependencies() {
 
   if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
     command -v jq >/dev/null 2>&1 || missing+=("jq")
+    if [[ "$USE_LIGHTHOUSE" == true ]]; then
+      command -v lighthouse >/dev/null 2>&1 || missing+=("lighthouse")
+    fi
   fi
 
   if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "accessibility" ]]; then
