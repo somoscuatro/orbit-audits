@@ -17,29 +17,47 @@ print_help() {
   echo "  --lighthouse     Use Lighthouse CLI instead of Google PageSpeed API for the general audit."
 }
 
-if [[ $# -eq 0 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  print_help
-  exit 0
-fi
-
 # Parse options
 USE_LIGHTHOUSE=false
-while [[ "${1:-}" == --* ]]; do
+URLS_FILE=""
+AUDIT_TYPE="all"
+
+while [[ $# -gt 0 ]]; do
   case "$1" in
+  -h | --help)
+    print_help
+    exit 0
+    ;;
   --lighthouse)
     USE_LIGHTHOUSE=true
     shift
     ;;
-  *)
+  -*)
     echo "Error: Unknown option '$1'" >&2
     exit 1
+    ;;
+  *)
+    if [[ -z "$URLS_FILE" ]]; then
+      URLS_FILE="$1"
+    elif [[ "$AUDIT_TYPE" == "all" ]]; then
+      AUDIT_TYPE="$1"
+    else
+      echo "Error: Unexpected argument '$1'" >&2
+      exit 1
+    fi
+    shift
     ;;
   esac
 done
 
+if [[ -z "$URLS_FILE" ]]; then
+  print_help
+  exit 1
+fi
+
 # Configuration
-readonly URLS_FILE="$1"
-readonly AUDIT_TYPE="${2:-all}"
+readonly URLS_FILE
+readonly AUDIT_TYPE
 readonly OUT_DIR="./audits_results"
 
 # Function to 'slugify' a URL's domain using pure bash
@@ -96,33 +114,39 @@ process_url() {
   # Create the output directory for this domain
   mkdir -p "$domain_dir"
 
-  # Fetch headers and body ONCE to share across audits that need them (csp, security)
-  local tmp_headers=""
-  local tmp_body=""
+  # Fetch headers and body ONCE to share across ALL audits (DRY principle)
+  local tmp_headers tmp_body curl_out status_code content_type
+  tmp_headers=$(mktemp)
+  tmp_body=$(mktemp)
+  TMP_FILES+=("$tmp_headers" "$tmp_body")
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "csp" || "$AUDIT_TYPE" == "security" ]]; then
-    tmp_headers=$(mktemp)
-    tmp_body=$(mktemp)
-    TMP_FILES+=("$tmp_headers" "$tmp_body")
-    curl -sL --max-time 30 -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" -D "$tmp_headers" "$url" >"$tmp_body" || true
-  fi
+  # Use a single curl request to get body, headers, HTTP code, and Content-Type simultaneously
+  curl_out=$(curl -sL --max-time 30 \
+    -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" \
+    -D "$tmp_headers" \
+    -w "%{http_code}\n%{content_type}" \
+    -o "$tmp_body" \
+    "$url" || echo -e "000\nunknown")
+
+  status_code=$(echo "$curl_out" | head -n 1)
+  content_type=$(echo "$curl_out" | tail -n 1)
 
   # Run selected audits based on AUDIT_TYPE parameter
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
     local fallback_to_lighthouse="$USE_LIGHTHOUSE"
 
     if [[ "$fallback_to_lighthouse" != true ]]; then
-      local curl_out status_code content_type
-      curl_out=$(curl -sL -o /dev/null -w "%{http_code}\n%{content_type}" --max-time 10 "$url" || echo "000")
-      status_code=$(echo "$curl_out" | head -n 1)
-      content_type=$(echo "$curl_out" | tail -n 1)
-
       if [[ "$status_code" != "200" || "$content_type" != *"text/html"* ]]; then
-        echo "  -> Notice: URL appears to block basic requests (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Falling back to Lighthouse CLI."
-        fallback_to_lighthouse=true
+        if command -v lighthouse >/dev/null 2>&1; then
+          echo "  -> Notice: URL appears to block basic requests (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Falling back to Lighthouse CLI."
+          fallback_to_lighthouse=true
+        else
+          echo "  -> Notice: URL blocks basic requests (HTTP ${status_code}), but 'lighthouse' CLI is not installed. Attempting PageSpeed API anyway."
+        fi
       fi
     fi
 
+    # Strategy Pattern: Dynamically source the chosen implementation
     if [[ "$fallback_to_lighthouse" == true ]]; then
       source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
     else
@@ -131,15 +155,15 @@ process_url() {
     run_general_audit "$url" "$domain_dir"
   fi
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "accessibility" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
     run_accessibility_audit "$url" "$domain_dir"
   fi
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "csp" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|csp)$ ]]; then
     run_csp_audit "$url" "$domain_dir" "$tmp_headers" "$tmp_body"
   fi
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "security" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|security)$ ]]; then
     run_security_headers_audit "$url" "$domain_dir" "$tmp_headers"
   fi
 
@@ -157,18 +181,20 @@ check_dependencies() {
   # curl is always needed
   command -v curl >/dev/null 2>&1 || missing+=("curl")
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "general" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
     command -v jq >/dev/null 2>&1 || missing+=("jq")
+    # Note: lighthouse might be needed dynamically during fallback,
+    # but we only hard-fail upfront if the user explicitly forced --lighthouse
     if [[ "$USE_LIGHTHOUSE" == true ]]; then
       command -v lighthouse >/dev/null 2>&1 || missing+=("lighthouse")
     fi
   fi
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "accessibility" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
     command -v pa11y >/dev/null 2>&1 || missing+=("pa11y")
   fi
 
-  if [[ "$AUDIT_TYPE" == "all" || "$AUDIT_TYPE" == "csp" ]]; then
+  if [[ "$AUDIT_TYPE" =~ ^(all|csp)$ ]]; then
     command -v csp >/dev/null 2>&1 || missing+=("csp")
   fi
 
