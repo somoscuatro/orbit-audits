@@ -36,7 +36,7 @@ run_csp_audit() {
 
   if [[ -n "$csp_content" ]]; then
     # Pass the extracted content to 'csp validate' and catch potential non-zero exit codes if the CSP is invalid
-    csp validate "$csp_content" --output-format=json >"$csp_outfile" || true
+    csp validate "$csp_content" --output-format=json >"$csp_outfile" 2>&1 || true
   else
     echo "  -> No CSP header or meta tag found for $url"
     echo '{"error":"No Content-Security-Policy found in headers or meta tags"}' >"$csp_outfile"
