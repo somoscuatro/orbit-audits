@@ -147,7 +147,7 @@ process_url() {
   TMP_FILES+=("$tmp_headers" "$tmp_body")
 
   # Use a single curl request to get body, headers, HTTP code, and Content-Type simultaneously
-  curl_out=$(curl -sL --max-time 30 \
+  curl_out=$(curl -sL --max-time 30 --retry 2 --retry-delay 5 \
     -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" \
     -D "$tmp_headers" \
     -w "%{http_code}\n%{content_type}" \
