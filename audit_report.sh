@@ -64,7 +64,11 @@ _print_perf_score() {
   [[ "$perf" == "null" ]] && return
   local perf_pct
   perf_pct=${perf%.*}
-  echo "- **$label:** Performance ${perf_pct}/100, Accessibility $a11y, SEO $seo, Best Practices $bp"
+  echo "- **$label:**"
+  echo "  - Performance: ${perf_pct}/100"
+  echo "  - Accessibility: $a11y"
+  echo "  - SEO: $seo"
+  echo "  - Best Practices: $bp"
 }
 
 # === Report section writers ===
