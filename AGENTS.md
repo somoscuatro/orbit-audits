@@ -30,3 +30,10 @@ See `README.md` for CLI usage, dependencies, output structure.
 - Suggest `/cost` on long sessions to monitor cache.
 - Run tests before finish.
 - User instruction override all.
+
+## Commits
+
+- [Conventional Commits](https://www.conventionalcommits.org/) format.
+- Subject states WHAT (bug fixed, feature added, intent of refactor), not HOW (code shows that).
+- No description/body unless essential to understand the purpose.
+- No scope (the `(scope)` part in `type(scope): subject`) unless explicitly requested.
