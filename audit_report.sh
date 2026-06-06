@@ -353,15 +353,9 @@ run_report() {
   local domain_dir="$1"
   local url="$2"
   local report_mode="${3:-focused}"
-  local output_format="${4:-json}"
 
   local audited_at
   audited_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-  local do_json="false"
-  local do_md="false"
-  [[ "$output_format" == "json" || "$output_format" == "both" ]] && do_json="true"
-  [[ "$output_format" == "markdown" || "$output_format" == "both" ]] && do_md="true"
 
   local f_mobile="${domain_dir}/audit_general_mobile.json"
   local f_desktop="${domain_dir}/audit_general_desktop.json"
@@ -441,8 +435,7 @@ run_report() {
   [[ -f "$f_html" && -s "$f_html" ]] && html_json=$(_jq_safe '.' "$f_html")
 
   # --- summary.json ---
-  if [[ "$do_json" == "true" ]]; then
-    local summary_file="${domain_dir}/summary.json"
+  local summary_file="${domain_dir}/summary.json"
 
     local scores_json="null"
     if [[ "$mobile_perf" != "null" || "$desktop_perf" != "null" ]]; then
@@ -516,21 +509,18 @@ METRICS
   "html": $html_json
 }
 SUMMARY
-  fi
 
   # --- report.md ---
-  if [[ "$do_md" == "true" ]]; then
-    local report_file="${domain_dir}/report.md"
-    {
-      echo "# Audit Report — $url"
-      echo ""
-      echo "**Audited at:** $audited_at"
-      echo ""
+  local report_file="${domain_dir}/report.md"
+  {
+    echo "# Audit Report — $url"
+    echo ""
+    echo "**Audited at:** $audited_at"
+    echo ""
 
-      _write_perf_section "$domain_dir" "$lh_prefix" "$report_mode"
-      _write_a11y_section "$domain_dir" "$lh_prefix" "$report_mode"
-      _write_seo_section "$domain_dir" "$lh_prefix" "$report_mode"
-      _write_security_section "$domain_dir" "$report_mode"
-    } >"$report_file"
-  fi
+    _write_perf_section "$domain_dir" "$lh_prefix" "$report_mode"
+    _write_a11y_section "$domain_dir" "$lh_prefix" "$report_mode"
+    _write_seo_section "$domain_dir" "$lh_prefix" "$report_mode"
+    _write_security_section "$domain_dir" "$report_mode"
+  } >"$report_file"
 }

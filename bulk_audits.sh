@@ -17,8 +17,6 @@ print_help() {
   echo "  --lighthouse     Use Lighthouse CLI instead of Google PageSpeed API for the general audit."
   echo "  --report <mode>  Report verbosity. Default: 'focused' (actionable findings only)."
   echo "                   Use 'complete' for all findings including notices and raw values."
-  echo "  --format <fmt>   Output format. Default: 'json' (best for AI consumption)."
-  echo "                   Allowed: json (summary.json only), markdown (report.md only), both."
 }
 
 # Parse options
@@ -26,7 +24,6 @@ USE_LIGHTHOUSE=false
 URLS_FILE=""
 AUDIT_TYPE="all"
 REPORT_MODE="focused"
-OUTPUT_FORMAT="json"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,14 +41,6 @@ while [[ $# -gt 0 ]]; do
       exit 1
     fi
     REPORT_MODE="$2"
-    shift 2
-    ;;
-  --format)
-    if [[ -z "${2:-}" ]]; then
-      echo "Error: --format requires a value: json, markdown, or both" >&2
-      exit 1
-    fi
-    OUTPUT_FORMAT="$2"
     shift 2
     ;;
   -*)
@@ -81,7 +70,6 @@ fi
 readonly URLS_FILE
 readonly AUDIT_TYPE
 readonly REPORT_MODE
-readonly OUTPUT_FORMAT
 readonly OUT_DIR="./audits_results"
 
 # Function to 'slugify' a URL's domain using pure bash
@@ -240,7 +228,7 @@ process_url() {
   TMP_FILES=()
 
   if [[ "$gate_passed" == "true" || "$AUDIT_TYPE" =~ ^(csp|security)$ ]]; then
-    run_report "$domain_dir" "$url" "$REPORT_MODE" "$OUTPUT_FORMAT"
+    run_report "$domain_dir" "$url" "$REPORT_MODE"
   fi
 
   echo "  -> Saved all results for $url in $domain_dir"
@@ -293,11 +281,6 @@ main() {
 
   if [[ ! "$REPORT_MODE" =~ ^(focused|complete)$ ]]; then
     echo "Error: Invalid report mode '$REPORT_MODE'. Allowed values: focused, complete." >&2
-    exit 1
-  fi
-
-  if [[ ! "$OUTPUT_FORMAT" =~ ^(json|markdown|both)$ ]]; then
-    echo "Error: Invalid output format '$OUTPUT_FORMAT'. Allowed values: json, markdown, both." >&2
     exit 1
   fi
 
