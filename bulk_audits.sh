@@ -157,64 +157,70 @@ process_url() {
   status_code=$(echo "$curl_out" | head -n 1)
   content_type=$(echo "$curl_out" | tail -n 1)
 
-  # Run selected audits based on AUDIT_TYPE parameter
-  if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-    local fallback_to_lighthouse="$USE_LIGHTHOUSE"
-
-    if [[ "$fallback_to_lighthouse" != true ]]; then
-      if [[ "$status_code" != "200" || "$content_type" != *"text/html"* ]]; then
-        if command -v lighthouse >/dev/null 2>&1; then
-          echo "  -> Notice: URL appears to block basic requests (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Falling back to Lighthouse CLI."
-          fallback_to_lighthouse=true
-        else
-          echo "  -> Notice: URL blocks basic requests (HTTP ${status_code}), but 'lighthouse' CLI is not installed. Attempting PageSpeed API anyway."
-        fi
-      fi
-    fi
-
-    # Strategy Pattern: Dynamically source the chosen implementation
-    if [[ "$fallback_to_lighthouse" == true ]]; then
-      source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-      run_general_audit "$url" "$domain_dir"
-    else
-      source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
-      run_general_audit "$url" "$domain_dir"
-
-      # Since PageSpeed runs on Google Datacenter IPs, it often gets blocked (e.g. 503) 
-      # by sites even if your local laptop's `curl` passed perfectly fine.
-      # So we MUST verify the actual JSON output from PageSpeed API.
-      local ps_failed=false
-      for device in mobile desktop; do
-        local f="${domain_dir}/audit_general_${device}.json"
-        # If the file is missing/empty, or jq parses out an `.error` object
-        if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
-          ps_failed=true
-          break
-        fi
-      done
-
-      if [[ "$ps_failed" == true ]]; then
-        if command -v lighthouse >/dev/null 2>&1; then
-          echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
-          source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-          run_general_audit "$url" "$domain_dir"
-        else
-          echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
-        fi
-      fi
-    fi
-  fi
-
-  if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
-    run_accessibility_audit "$url" "$domain_dir"
-  fi
-
+  # --- Audits that don't need a valid HTML body ---
   if [[ "$AUDIT_TYPE" =~ ^(all|csp)$ ]]; then
     run_csp_audit "$url" "$domain_dir" "$tmp_headers" "$tmp_body"
   fi
 
   if [[ "$AUDIT_TYPE" =~ ^(all|security)$ ]]; then
     run_security_headers_audit "$url" "$domain_dir" "$tmp_headers"
+  fi
+
+  # --- Gate: validate the HTML page ---
+  if ! is_valid_html_page "$status_code" "$content_type" "$tmp_body"; then
+    echo "  -> Non-HTML or invalid response (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Skipping HTML-dependent audits."
+
+    if [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]; then
+      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_html.json"
+    fi
+    if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
+      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_general_mobile.json"
+      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_general_desktop.json"
+    fi
+    if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
+      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_accessibility.json"
+    fi
+  else
+    # --- HTML-dependent audits (gate passed) ---
+    if [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]; then
+      run_html_audit "$tmp_body" "$domain_dir"
+    fi
+
+    if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
+      local fallback_to_lighthouse="$USE_LIGHTHOUSE"
+
+      # Strategy Pattern: Dynamically source the chosen implementation
+      if [[ "$fallback_to_lighthouse" == true ]]; then
+        source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+        run_general_audit "$url" "$domain_dir"
+      else
+        source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
+        run_general_audit "$url" "$domain_dir"
+
+        local ps_failed=false
+        for device in mobile desktop; do
+          local f="${domain_dir}/audit_general_${device}.json"
+          if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
+            ps_failed=true
+            break
+          fi
+        done
+
+        if [[ "$ps_failed" == true ]]; then
+          if command -v lighthouse >/dev/null 2>&1; then
+            echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
+            source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+            run_general_audit "$url" "$domain_dir"
+          else
+            echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
+          fi
+        fi
+      fi
+    fi
+
+    if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
+      run_accessibility_audit "$url" "$domain_dir"
+    fi
   fi
 
   # Clean up temporary files for this URL
