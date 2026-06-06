@@ -129,6 +129,40 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Runs the general audit with PSI/Lighthouse strategy selection and fallback.
+# Uses readonly globals: SCRIPT_DIR (for source paths), USE_LIGHTHOUSE.
+_run_general_audit() {
+  local url="$1" domain_dir="$2" use_lighthouse="$3"
+
+  if [[ "$use_lighthouse" == true ]]; then
+    source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+    run_general_audit "$url" "$domain_dir"
+    return
+  fi
+
+  source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
+  run_general_audit "$url" "$domain_dir"
+
+  local ps_failed=false
+  for device in mobile desktop; do
+    local f="${domain_dir}/audit_general_${device}.json"
+    if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
+      ps_failed=true
+      break
+    fi
+  done
+
+  if [[ "$ps_failed" == true ]]; then
+    if command -v lighthouse >/dev/null 2>&1; then
+      echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
+      source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+      run_general_audit "$url" "$domain_dir"
+    else
+      echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
+    fi
+  fi
+}
+
 process_url() {
   local url="$1"
   local domain_safe
@@ -187,35 +221,7 @@ process_url() {
     fi
 
     if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-      local fallback_to_lighthouse="$USE_LIGHTHOUSE"
-
-      # Strategy Pattern: Dynamically source the chosen implementation
-      if [[ "$fallback_to_lighthouse" == true ]]; then
-        source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-        run_general_audit "$url" "$domain_dir"
-      else
-        source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
-        run_general_audit "$url" "$domain_dir"
-
-        local ps_failed=false
-        for device in mobile desktop; do
-          local f="${domain_dir}/audit_general_${device}.json"
-          if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
-            ps_failed=true
-            break
-          fi
-        done
-
-        if [[ "$ps_failed" == true ]]; then
-          if command -v lighthouse >/dev/null 2>&1; then
-            echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
-            source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-            run_general_audit "$url" "$domain_dir"
-          else
-            echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
-          fi
-        fi
-      fi
+      _run_general_audit "$url" "$domain_dir" "$USE_LIGHTHOUSE"
     fi
 
     if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
