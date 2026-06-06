@@ -163,6 +163,18 @@ _run_general_audit() {
   fi
 }
 
+# Writes error JSONs for HTML-dependent audits on gate failure.
+# Reads $AUDIT_TYPE (readonly global) — intentional, matches codebase convention.
+_write_gate_error_jsons() {
+  local domain_dir="$1" status_code="$2"
+  local err='{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}'
+
+  [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]          && echo "$err" > "${domain_dir}/audit_html.json"
+  [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]       && echo "$err" > "${domain_dir}/audit_general_mobile.json" \
+                                                && echo "$err" > "${domain_dir}/audit_general_desktop.json"
+  [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]] && echo "$err" > "${domain_dir}/audit_accessibility.json"
+}
+
 process_url() {
   local url="$1"
   local domain_safe
@@ -170,6 +182,8 @@ process_url() {
   local domain_dir="${OUT_DIR}/${domain_safe}"
 
   echo "Processing: $url"
+
+  local gate_passed=false
 
   # Create the output directory for this domain
   mkdir -p "$domain_dir"
@@ -204,17 +218,9 @@ process_url() {
   if ! is_valid_html_page "$status_code" "$content_type" "$tmp_body"; then
     echo "  -> Non-HTML or invalid response (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Skipping HTML-dependent audits."
 
-    if [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]; then
-      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_html.json"
-    fi
-    if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_general_mobile.json"
-      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_general_desktop.json"
-    fi
-    if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
-      echo '{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}' > "${domain_dir}/audit_accessibility.json"
-    fi
+    _write_gate_error_jsons "$domain_dir" "$status_code"
   else
+    gate_passed=true
     # --- HTML-dependent audits (gate passed) ---
     if [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]; then
       run_html_audit "$tmp_body" "$domain_dir"
@@ -232,6 +238,10 @@ process_url() {
   # Clean up temporary files for this URL
   rm -f "$tmp_headers" "$tmp_body"
   TMP_FILES=()
+
+  if [[ "$gate_passed" == "true" || "$AUDIT_TYPE" =~ ^(csp|security)$ ]]; then
+    run_report "$domain_dir" "$url" "$REPORT_MODE" "$OUTPUT_FORMAT"
+  fi
 
   echo "  -> Saved all results for $url in $domain_dir"
 }
