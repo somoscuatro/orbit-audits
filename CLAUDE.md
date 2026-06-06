@@ -5,8 +5,11 @@ See `README.md` for CLI usage, dependencies, output structure.
 ## Architecture
 
 - `bulk_audits.sh` = sole entry point. `audit_*.sh` scripts sourced (not executed).
-- **HTTP Fetch**: Single `curl` per URL. Temp files (`tmp_headers`, `tmp_body`) shared across audits (CSP, security). Minimize network requests.
+- **HTTP Fetch**: Single `curl` per URL. Temp files (`tmp_headers`, `tmp_body`) shared across audits (CSP, security, HTML). Minimize network requests.
+- **HTML Gate**: `is_valid_html_page()` (`audit_html.sh`) validates status=200, Content-Type has `text/html` or `application/xhtml+xml`, and body non-empty. Non-HTML responses skip HTML-dependent audits (general, accessibility, HTML). CSP and security audits run regardless.
 - **Strategy Pattern**: `bulk_audits.sh` dynamically source `audit_general_pagespeed.sh` or `audit_general_lighthouse.sh`. Fallback Lighthouse trigger auto on API/WAF errors.
+- **Report**: `audit_report.sh` aggregates all audit results into `summary.json` and `report.md` (focused or complete mode via `--report` flag).
+- **Tests**: `tests/run_all.sh` runs all unit and integration tests. `tests/test_server.py` provides configurable HTTP server for integration tests.
 - **Scope**: `get_http_header()` (in `bulk_audits.sh`) globally available to sourced scripts.
 
 ## Code Style
