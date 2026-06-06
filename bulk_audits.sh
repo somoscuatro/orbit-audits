@@ -231,8 +231,10 @@ check_dependencies() {
   # curl is always needed
   command -v curl >/dev/null 2>&1 || missing+=("curl")
 
+  # jq is always needed (general audits + report generation)
+  command -v jq >/dev/null 2>&1 || missing+=("jq")
+
   if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-    command -v jq >/dev/null 2>&1 || missing+=("jq")
     # Note: lighthouse might be needed dynamically during fallback,
     # but we only hard-fail upfront if the user explicitly forced --lighthouse
     if [[ "$USE_LIGHTHOUSE" == true ]]; then
