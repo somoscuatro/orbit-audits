@@ -50,7 +50,7 @@ _html_extract_all() {
 _get_score() {
   local f="$1" cat="$2" lh_prefix="$3"
   [[ -f "$f" && -s "$f" ]] || { printf 'null'; return 0; }
-  _jq_safe -r "${lh_prefix}.categories.${cat}.score | (. * 100) | floor" "$f"
+  _jq_safe -r "${lh_prefix}.categories[\"${cat}\"].score | (. * 100) | floor" "$f"
 }
 
 _get_metric() {
