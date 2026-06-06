@@ -10,7 +10,7 @@ print_help() {
   echo "Arguments:"
   echo "  <urls_file>  Path to a text file containing a list of URLs to audit (one per line)."
   echo "  [audit_type] Optional. Which audit to run. Default is 'all'."
-  echo "               Allowed values: all, general, accessibility, csp, security"
+  echo "               Allowed values: all, general, accessibility, csp, security, html"
   echo ""
   echo "Options:"
   echo "  -h, --help       Show this help message and exit."
@@ -260,8 +260,8 @@ main() {
     exit 1
   fi
 
-  if [[ ! "$AUDIT_TYPE" =~ ^(all|general|accessibility|csp|security)$ ]]; then
-    echo "Error: Invalid audit type '$AUDIT_TYPE'. Allowed values: all, general, accessibility, csp, security." >&2
+  if [[ ! "$AUDIT_TYPE" =~ ^(all|general|accessibility|csp|security|html)$ ]]; then
+    echo "Error: Invalid audit type '$AUDIT_TYPE'. Allowed values: all, general, accessibility, csp, security, html." >&2
     exit 1
   fi
 
