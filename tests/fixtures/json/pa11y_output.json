@@ -1,0 +1,1 @@
+[{"code":"ERR1","type":"error","message":"Missing alt text"},{"code":"ERR1","type":"error","message":"Missing alt text"},{"code":"ERR2","type":"error","message":"Empty link"},{"code":"WARN1","type":"warning","message":"Suspicious link text"},{"code":"NOTE1","type":"notice","message":"Check title"}]
