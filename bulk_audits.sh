@@ -10,17 +10,20 @@ print_help() {
   echo "Arguments:"
   echo "  <urls_file>  Path to a text file containing a list of URLs to audit (one per line)."
   echo "  [audit_type] Optional. Which audit to run. Default is 'all'."
-  echo "               Allowed values: all, general, accessibility, csp, security"
+  echo "               Allowed values: all, general, accessibility, csp, security, html"
   echo ""
   echo "Options:"
   echo "  -h, --help       Show this help message and exit."
   echo "  --lighthouse     Use Lighthouse CLI instead of Google PageSpeed API for the general audit."
+  echo "  --report <mode>  Report verbosity. Default: 'focused' (actionable findings only)."
+  echo "                   Use 'complete' for all findings including notices and raw values."
 }
 
 # Parse options
 USE_LIGHTHOUSE=false
 URLS_FILE=""
 AUDIT_TYPE="all"
+REPORT_MODE="focused"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +34,14 @@ while [[ $# -gt 0 ]]; do
   --lighthouse)
     USE_LIGHTHOUSE=true
     shift
+    ;;
+  --report)
+    if [[ -z "${2:-}" ]]; then
+      echo "Error: --report requires a value: focused or complete" >&2
+      exit 1
+    fi
+    REPORT_MODE="$2"
+    shift 2
     ;;
   -*)
     echo "Error: Unknown option '$1'" >&2
@@ -58,6 +69,7 @@ fi
 # Configuration
 readonly URLS_FILE
 readonly AUDIT_TYPE
+readonly REPORT_MODE
 readonly OUT_DIR="./audits_results"
 
 # Function to 'slugify' a URL's domain using pure bash
@@ -91,6 +103,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/audit_accessibility.sh"
 source "${SCRIPT_DIR}/audit_csp.sh"
 source "${SCRIPT_DIR}/audit_security_headers.sh"
+source "${SCRIPT_DIR}/audit_html.sh"
+source "${SCRIPT_DIR}/audit_report.sh"
 
 # Temporary files registry for cleanup on exit/interrupt
 TMP_FILES=()
@@ -103,6 +117,52 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Runs the general audit with PSI/Lighthouse strategy selection and fallback.
+# Uses readonly globals: SCRIPT_DIR (for source paths), USE_LIGHTHOUSE.
+_run_general_audit() {
+  local url="$1" domain_dir="$2" use_lighthouse="$3"
+
+  if [[ "$use_lighthouse" == true ]]; then
+    source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+    run_general_audit "$url" "$domain_dir"
+    return
+  fi
+
+  source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
+  run_general_audit "$url" "$domain_dir"
+
+  local ps_failed=false
+  for device in mobile desktop; do
+    local f="${domain_dir}/audit_general_${device}.json"
+    if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
+      ps_failed=true
+      break
+    fi
+  done
+
+  if [[ "$ps_failed" == true ]]; then
+    if command -v lighthouse >/dev/null 2>&1; then
+      echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
+      source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
+      run_general_audit "$url" "$domain_dir"
+    else
+      echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
+    fi
+  fi
+}
+
+# Writes error JSONs for HTML-dependent audits on gate failure.
+# Reads $AUDIT_TYPE (readonly global) — intentional, matches codebase convention.
+_write_gate_error_jsons() {
+  local domain_dir="$1" status_code="$2"
+  local err='{"error":"Non-200 or non-HTML response","status_code":"'"$status_code"'"}'
+
+  [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]          && echo "$err" > "${domain_dir}/audit_html.json"
+  [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]       && echo "$err" > "${domain_dir}/audit_general_mobile.json" \
+                                                && echo "$err" > "${domain_dir}/audit_general_desktop.json"
+  [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]] && echo "$err" > "${domain_dir}/audit_accessibility.json"
+}
+
 process_url() {
   local url="$1"
   local domain_safe
@@ -111,6 +171,8 @@ process_url() {
 
   echo "Processing: $url"
 
+  local gate_passed=false
+
   # Create the output directory for this domain
   mkdir -p "$domain_dir"
 
@@ -118,10 +180,10 @@ process_url() {
   local tmp_headers tmp_body curl_out status_code content_type
   tmp_headers=$(mktemp)
   tmp_body=$(mktemp)
-  TMP_FILES+=("$tmp_headers" "$tmp_body")
+  TMP_FILES=("$tmp_headers" "$tmp_body")
 
   # Use a single curl request to get body, headers, HTTP code, and Content-Type simultaneously
-  curl_out=$(curl -sL --max-time 30 \
+  curl_out=$(curl -sL --max-time 30 --retry 2 --retry-delay 5 \
     -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)" \
     -D "$tmp_headers" \
     -w "%{http_code}\n%{content_type}" \
@@ -131,58 +193,7 @@ process_url() {
   status_code=$(echo "$curl_out" | head -n 1)
   content_type=$(echo "$curl_out" | tail -n 1)
 
-  # Run selected audits based on AUDIT_TYPE parameter
-  if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-    local fallback_to_lighthouse="$USE_LIGHTHOUSE"
-
-    if [[ "$fallback_to_lighthouse" != true ]]; then
-      if [[ "$status_code" != "200" || "$content_type" != *"text/html"* ]]; then
-        if command -v lighthouse >/dev/null 2>&1; then
-          echo "  -> Notice: URL appears to block basic requests (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Falling back to Lighthouse CLI."
-          fallback_to_lighthouse=true
-        else
-          echo "  -> Notice: URL blocks basic requests (HTTP ${status_code}), but 'lighthouse' CLI is not installed. Attempting PageSpeed API anyway."
-        fi
-      fi
-    fi
-
-    # Strategy Pattern: Dynamically source the chosen implementation
-    if [[ "$fallback_to_lighthouse" == true ]]; then
-      source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-      run_general_audit "$url" "$domain_dir"
-    else
-      source "${SCRIPT_DIR}/audit_general_pagespeed.sh"
-      run_general_audit "$url" "$domain_dir"
-
-      # Since PageSpeed runs on Google Datacenter IPs, it often gets blocked (e.g. 503) 
-      # by sites even if your local laptop's `curl` passed perfectly fine.
-      # So we MUST verify the actual JSON output from PageSpeed API.
-      local ps_failed=false
-      for device in mobile desktop; do
-        local f="${domain_dir}/audit_general_${device}.json"
-        # If the file is missing/empty, or jq parses out an `.error` object
-        if [[ ! -s "$f" ]] || grep -q '"error":' "$f"; then
-          ps_failed=true
-          break
-        fi
-      done
-
-      if [[ "$ps_failed" == true ]]; then
-        if command -v lighthouse >/dev/null 2>&1; then
-          echo "  -> Warning: PageSpeed API returned an error (likely blocked Google IP). Retrying locally with Lighthouse CLI..."
-          source "${SCRIPT_DIR}/audit_general_lighthouse.sh"
-          run_general_audit "$url" "$domain_dir"
-        else
-          echo "  -> Warning: PageSpeed API returned an error, but 'lighthouse' CLI is not installed. Cannot retry locally."
-        fi
-      fi
-    fi
-  fi
-
-  if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
-    run_accessibility_audit "$url" "$domain_dir"
-  fi
-
+  # --- Audits that don't need a valid HTML body ---
   if [[ "$AUDIT_TYPE" =~ ^(all|csp)$ ]]; then
     run_csp_audit "$url" "$domain_dir" "$tmp_headers" "$tmp_body"
   fi
@@ -191,9 +202,34 @@ process_url() {
     run_security_headers_audit "$url" "$domain_dir" "$tmp_headers"
   fi
 
+  # --- Gate: validate the HTML page ---
+  if ! is_valid_html_page "$status_code" "$content_type" "$tmp_body"; then
+    echo "  -> Non-HTML or invalid response (HTTP ${status_code}, Content-Type: ${content_type:-unknown}). Skipping HTML-dependent audits."
+
+    _write_gate_error_jsons "$domain_dir" "$status_code"
+  else
+    gate_passed=true
+    # --- HTML-dependent audits (gate passed) ---
+    if [[ "$AUDIT_TYPE" =~ ^(all|html)$ ]]; then
+      run_html_audit "$tmp_body" "$domain_dir"
+    fi
+
+    if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
+      _run_general_audit "$url" "$domain_dir" "$USE_LIGHTHOUSE"
+    fi
+
+    if [[ "$AUDIT_TYPE" =~ ^(all|accessibility)$ ]]; then
+      run_accessibility_audit "$url" "$domain_dir"
+    fi
+  fi
+
   # Clean up temporary files for this URL
   rm -f "$tmp_headers" "$tmp_body"
   TMP_FILES=()
+
+  if [[ "$gate_passed" == "true" || "$AUDIT_TYPE" =~ ^(csp|security)$ ]]; then
+    run_report "$domain_dir" "$url" "$REPORT_MODE"
+  fi
 
   echo "  -> Saved all results for $url in $domain_dir"
 }
@@ -205,8 +241,10 @@ check_dependencies() {
   # curl is always needed
   command -v curl >/dev/null 2>&1 || missing+=("curl")
 
+  # jq is always needed (general audits + report generation)
+  command -v jq >/dev/null 2>&1 || missing+=("jq")
+
   if [[ "$AUDIT_TYPE" =~ ^(all|general)$ ]]; then
-    command -v jq >/dev/null 2>&1 || missing+=("jq")
     # Note: lighthouse might be needed dynamically during fallback,
     # but we only hard-fail upfront if the user explicitly forced --lighthouse
     if [[ "$USE_LIGHTHOUSE" == true ]]; then
@@ -236,8 +274,13 @@ main() {
     exit 1
   fi
 
-  if [[ ! "$AUDIT_TYPE" =~ ^(all|general|accessibility|csp|security)$ ]]; then
-    echo "Error: Invalid audit type '$AUDIT_TYPE'. Allowed values: all, general, accessibility, csp, security." >&2
+  if [[ ! "$AUDIT_TYPE" =~ ^(all|general|accessibility|csp|security|html)$ ]]; then
+    echo "Error: Invalid audit type '$AUDIT_TYPE'. Allowed values: all, general, accessibility, csp, security, html." >&2
+    exit 1
+  fi
+
+  if [[ ! "$REPORT_MODE" =~ ^(focused|complete)$ ]]; then
+    echo "Error: Invalid report mode '$REPORT_MODE'. Allowed values: focused, complete." >&2
     exit 1
   fi
 
