@@ -115,6 +115,8 @@ readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/audit_accessibility.sh"
 source "${SCRIPT_DIR}/audit_csp.sh"
 source "${SCRIPT_DIR}/audit_security_headers.sh"
+source "${SCRIPT_DIR}/audit_html.sh"
+source "${SCRIPT_DIR}/audit_report.sh"
 
 # Temporary files registry for cleanup on exit/interrupt
 TMP_FILES=()
