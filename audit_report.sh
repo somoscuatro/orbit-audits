@@ -9,10 +9,12 @@ _jq_safe() {
 # Extract all HTML audit fields in a single jq call. Outputs TSV.
 # Caveat: fields containing literal tabs are rare in HTML metadata but
 # would silently misparse the remaining columns.
+# SYNC: field array here must match IFS read variable count in _write_seo_section (18)
 _html_extract_all() {
   local json="$1"
   [[ -s "$json" ]] || return 0
-  jq -r '
+  local tsv
+  tsv=$(jq -r '
     [
       (.title_present                // false),
       (.meta_description_present     // false),
@@ -33,7 +35,16 @@ _html_extract_all() {
       (.title_length                 // 0),
       (.meta_description_length      // 0)
     ] | @tsv
-  ' "$json" 2>/dev/null
+  ' "$json" 2>/dev/null) || return 0
+
+  local field_count
+  field_count=$(printf '%s' "$tsv" | awk -F'\t' '{print NF}')
+  if [[ "$field_count" != "18" ]]; then
+    echo " -> Warning: audit_html.json has $field_count fields, expected 18. Report SEO section may be incorrect." >&2
+    return 0
+  fi
+
+  printf '%s' "$tsv"
 }
 
 _get_score() {
@@ -202,6 +213,7 @@ _write_seo_section() {
     local ogt_present ogd_present ogi_present sd_present img_alt
     local title_val lang_val canon_val title_len meta_desc_len
 
+    # SYNC: variable count here must match _html_extract_all field array (18)
     IFS=$'\t' read -r title_present meta_desc_present h1_count lang_present \
       canonical_present charset_present robots_present robots_value \
       ogt_present ogd_present ogi_present sd_present img_alt \
@@ -323,6 +335,9 @@ _write_security_section() {
 
       local csp_valid="false"
       local error_count
+      # csp validate --output-format=json returns an array of finding objects.
+      # Severity scale (csp npm package): 1 = notice, 10 = warning, 20 = error.
+      # We treat severity >= 20 as a hard error (CSP invalid).
       error_count=$(_jq_safe -r '[.[]? | select(.severity >= 20)] | length' "$f_csp")
       [[ "$error_count" == "0" ]] && csp_valid="true"
 
@@ -424,6 +439,9 @@ run_report() {
       if [[ "$is_array" == "true" ]]; then
         csp_present="true"
         local error_count
+        # csp validate --output-format=json returns an array of finding objects.
+        # Severity scale (csp npm package): 1 = notice, 10 = warning, 20 = error.
+        # We treat severity >= 20 as a hard error (CSP invalid).
         error_count=$(_jq_safe -r '[.[]? | select(.severity >= 20)] | length' "$f_csp")
         [[ "$error_count" == "0" ]] && csp_valid="true"
       fi
@@ -494,21 +512,25 @@ METRICS
       csp_summary="{\"present\": $csp_present, \"valid\": $csp_valid}"
     fi
 
-    local url_escaped
-    url_escaped=$(printf '%s' "$url" | jq -Rr '@json' | sed 's/^"//;s/"$//')
-
-    cat >"$summary_file" <<SUMMARY
-{
-  "url": "$url_escaped",
-  "audited_at": "$audited_at",
-  "scores": $scores_json,
-  "metrics": $metrics_json,
-  "accessibility_issues": $a11y_json,
-  "security_headers": $sec_summary,
-  "csp": $csp_summary,
-  "html": $html_json
-}
-SUMMARY
+    jq -n \
+      --arg     url                  "$url" \
+      --arg     audited_at           "$audited_at" \
+      --argjson scores               "${scores_json:-null}" \
+      --argjson metrics              "${metrics_json:-null}" \
+      --argjson accessibility_issues "${a11y_json:-null}" \
+      --argjson security_headers     "${sec_summary:-null}" \
+      --argjson csp                  "${csp_summary:-null}" \
+      --argjson html                 "${html_json:-null}" \
+      '{
+        url:                  $url,
+        audited_at:           $audited_at,
+        scores:               $scores,
+        metrics:              $metrics,
+        accessibility_issues: $accessibility_issues,
+        security_headers:     $security_headers,
+        csp:                  $csp,
+        html:                 $html
+      }' > "$summary_file"
 
   # --- report.md ---
   local report_file="${domain_dir}/report.md"
